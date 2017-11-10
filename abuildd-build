@@ -9,7 +9,6 @@ from abuildd import __version__
 from abuildd.repository import APKBuildRepository
 
 
-logging.basicConfig(format='%(asctime)-15s: %(message)s')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -19,12 +18,12 @@ def banner(options, args):
     logger.info('options: %r; args: %r', options, args)
 
 
-def update(loop, repo):
-    loop.run_until_complete(repo.update())
+def update(loop, repo, log):
+    loop.run_until_complete(repo.update(log))
 
 
-def build(loop, repo, targets, output):
-    loop.run_until_complete(asyncio.gather(*[repo.build(target, output) for target in targets]))
+def build(loop, repo, targets, output, log):
+    loop.run_until_complete(asyncio.gather(*[repo.build(target, output, log) for target in targets]))
 
 
 def main():
@@ -35,7 +34,23 @@ def main():
                       help='path to deposit built packages in')
     parser.add_option('-p', '--parallel', action='store_true', dest='parallel', default=False,
                       help='build targets in parallel')
+    parser.add_option('-l', '--log', dest='log', default=None, metavar='FILE',
+                      help='log output to FILE')
     options, args = parser.parse_args()
+
+    log = None
+    if options.log:
+        try:
+            log = open(options.log, 'w')
+        except Exception as e:
+            logger.error('while opening %s:', options.log)
+            logger.exception()
+            return 1
+
+    if log:
+        logging.basicConfig(format='%(asctime)-15s: %(message)s', stream=log)
+    else:
+        logging.basicConfig(format='%(asctime)-15s: %(message)s')
 
     banner(options, args)
 
@@ -49,13 +64,13 @@ def main():
 
     loop = asyncio.get_event_loop()
     repo = APKBuildRepository.from_url(getattr(options, 'git-repository'))
-    update(loop, repo)
+    update(loop, repo, log)
 
     if not options.parallel:
         for target in args:
-            build(loop, repo, [target], options.destination)
+            build(loop, repo, [target], options.destination, log)
     else:
-        build(loop, repo, args, options.destination)
+        build(loop, repo, args, options.destination, log)
 
     return 0
 

@@ -18,7 +18,9 @@ def chdir_context(new_path):
         os.chdir(curdir)
 
 
-async def run_blocking_command(arglist, env=None):
-    logger.info('command> %r', arglist)
-    proc = await asyncio.create_subprocess_exec(*arglist, env=env)
+async def run_blocking_command(arglist, env=None, log=None):
+    if not log:
+        log = asyncio.subprocess.PIPE
+
+    proc = await asyncio.create_subprocess_exec(*arglist, env=env, stdout=log, stderr=log)
     return await proc.wait()

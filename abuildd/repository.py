@@ -30,18 +30,18 @@ class APKBuildRepository:
     def from_url(cls, url, branch=None):
         return cls(url=url, branch=branch)
 
-    async def update(self):
+    async def update(self, log):
         if self._tempdir:
-            return await self.checkout()
+            return await self.checkout(log)
 
         with chdir_context(self.path):
             logger.info('Updating git repository: %s', self.path)
             arglist = ['/usr/bin/git', 'update']
-            return await run_blocking_command(arglist)
+            return await run_blocking_command(arglist, log=log)
 
         return None
 
-    async def checkout(self):
+    async def checkout(self, log):
         logger.info('Checking out git repository: %s -> %s', self.url, self.path)
 
         arglist = ['/usr/bin/git', 'clone', '--depth=50']
@@ -50,9 +50,9 @@ class APKBuildRepository:
         arglist += [self.url, self.path]
 
         with chdir_context(self.path):
-            return await run_blocking_command(arglist)
+            return await run_blocking_command(arglist, log=log)
 
-    async def build(self, target, output):
+    async def build(self, target, output, log):
         logger.info('Trying to build: %s', target)
 
         environment = os.environ
@@ -66,7 +66,7 @@ class APKBuildRepository:
         logger.info('Target srcdir: %s', target_srcdir)
 
         with chdir_context(target_srcdir):
-            result = await run_blocking_command(['/usr/bin/abuild', 'rootbld'], environment)
+            result = await run_blocking_command(['/usr/bin/abuild', 'rootbld'], environment, log)
 
         logger.info('Build result: %r', result)
         return result
