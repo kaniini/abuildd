@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+
+import asyncio
+import logging
+import json
+
+from optparse import OptionParser
+
+from hbmqtt.client import MQTTClient, ClientException
+from hbmqtt.mqtt.constants import QOS_0
+
+from abuildd import __version__
+from abuildd.utility import run_blocking_command
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+
+JOBS = asyncio.Queue()
+
+
+async def work_loop(client, options):
+    global JOBS
+
+    while True:
+        job = await JOBS.get()
+
+        logger.debug('JOB: processing %r', job)
+
+        if 'git-repository' not in job or 'arch' not in job or 'job-id' not in job or 'target' not in job:
+            logger.info('JOB: job %r is invalid', job)
+            continue
+
+        arglist = ['./abuildd-build']
+        arglist += ['--git-repository', job['git-repository']]
+        arglist += ['--destination', '%s/%d' % (options.destination, job['job-id'])]
+        arglist += ['--log', '%s/%d.log' % (options.destination, job['job-id'])]
+        arglist += [job['target']]
+
+        result = await run_blocking_command(arglist)
+        message = {
+            'job-id': job['job-id'],
+            'result': result,
+        }
+        path = '%s/Completion/%d' % (options.node_name, job['job-id'])
+        await client.publish(path, json.dumps(message).encode('ascii'))
+
+
+async def mqtt_loop(client):
+    global JOBS
+
+    while True:
+        message = await client.deliver_message()
+        packet = message.publish_packet
+        topic = packet.variable_header.topic_name
+
+        logger.debug('PACKET: %r', packet)
+
+        if 'Job' in topic:
+            await JOBS.put(json.loads(packet.payload.data.decode('ascii')))
+
+
+async def main_loop(client, options):
+    await asyncio.wait([mqtt_loop(client), work_loop(client, options)])
+
+
+def banner(options, args):
+    logger.info('abuildd-agent version {v}'.format(v=__version__))
+    logger.info('options: %r; args: %r', options, args)
+
+
+def main():
+    parser = OptionParser()
+    parser.add_option('-d', '--destination', dest='destination', metavar='PATH',
+                      help='root path to deposit built packages in')
+    parser.add_option('-l', '--log', dest='log', default=None, metavar='FILE',
+                      help='log output to FILE')
+    parser.add_option('-m', '--mqtt-server', dest='mqtt_server', metavar='HOST',
+                      help='mqtt server to connect to')
+    parser.add_option('-n', '--node-name', dest='node_name', metavar='NAME',
+                      help='abuildd node name to process messages for')
+    options, args = parser.parse_args()
+
+    log = None
+    if options.log:
+        try:
+            log = open(options.log, 'w')
+        except Exception as e:
+            logger.error('while opening %s:', options.log)
+            logger.exception()
+            return 1
+
+    if log:
+        logging.basicConfig(format='%(asctime)-15s: %(message)s', stream=log)
+    else:
+        logging.basicConfig(format='%(asctime)-15s: %(message)s')
+
+    banner(options, args)
+
+    if not options.destination:
+        logger.error('--destination is required')
+        return 1
+
+    if not options.mqtt_server:
+        logger.error('--mqtt-server is required')
+        return 1
+
+    if not options.node_name:
+        logger.error('--node-name is required')
+
+    loop = asyncio.get_event_loop()
+    client = MQTTClient()
+
+    loop.run_until_complete(client.connect(options.mqtt_server))
+    loop.run_until_complete(client.subscribe([(options.node_name + '/#', QOS_0)]))
+
+    loop.run_until_complete(main_loop(client, options))
+
+    return 0
+
+
+if __name__ == '__main__':
+    exit(main())
