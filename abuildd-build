@@ -23,7 +23,7 @@ def update(loop, repo, log):
 
 
 def build(loop, repo, targets, output, log):
-    loop.run_until_complete(asyncio.gather(*[repo.build(target, output, log) for target in targets]))
+    return loop.run_until_complete(asyncio.gather(*[repo.build(target, output, log) for target in targets]))[0]
 
 
 def main():
@@ -68,7 +68,7 @@ def main():
 
     if not options.parallel:
         for target in args:
-            build(loop, repo, [target], options.destination, log)
+            return build(loop, repo, [target], options.destination, log)
     else:
         build(loop, repo, args, options.destination, log)
 
